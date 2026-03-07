@@ -1,20 +1,67 @@
 import { useState, useRef, useEffect } from "react";
 import { Send, Bot, User, ArrowLeft, Sparkles } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import { useCreateTask, useUpdateTask, useDeleteTask } from "@/hooks/useTasks";
+import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
 
 type Msg = { role: "user" | "assistant"; content: string };
 
 const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat`;
+
+function extractActions(text: string) {
+  const actions: any[] = [];
+  const regex = /```action\s*\n([\s\S]*?)```/g;
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    try {
+      actions.push(JSON.parse(match[1].trim()));
+    } catch {}
+  }
+  return actions;
+}
+
+function stripActionBlocks(text: string) {
+  return text.replace(/```action\s*\n[\s\S]*?```/g, "").trim();
+}
 
 export function AIChatPanel({ onBack }: { onBack: () => void }) {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const createTask = useCreateTask();
+  const updateTask = useUpdateTask();
+  const deleteTask = useDeleteTask();
+  const qc = useQueryClient();
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  const executeActions = async (text: string) => {
+    const actions = extractActions(text);
+    for (const action of actions) {
+      try {
+        if (action.type === "update_task" && action.id) {
+          await updateTask.mutateAsync({ id: action.id, ...action.updates });
+          toast.success("Task updated by AI");
+        } else if (action.type === "create_task" && action.task) {
+          await createTask.mutateAsync(action.task);
+          toast.success("Task created by AI");
+        } else if (action.type === "delete_task" && action.id) {
+          await deleteTask.mutateAsync(action.id);
+          toast.success("Task deleted by AI");
+        }
+      } catch (e) {
+        console.error("Action failed:", e);
+        toast.error("Failed to execute AI action");
+      }
+    }
+    if (actions.length > 0) {
+      qc.invalidateQueries({ queryKey: ["tasks"] });
+    }
+  };
 
   const send = async () => {
     const text = input.trim();
@@ -82,6 +129,11 @@ export function AIChatPanel({ onBack }: { onBack: () => void }) {
           }
         }
       }
+
+      // Execute any actions in the final response
+      if (assistantSoFar) {
+        await executeActions(assistantSoFar);
+      }
     } catch (e) {
       console.error(e);
       setMessages((prev) => [...prev, { role: "assistant", content: "Sorry, something went wrong. Please try again." }]);
@@ -102,7 +154,7 @@ export function AIChatPanel({ onBack }: { onBack: () => void }) {
         </div>
         <div>
           <h2 className="text-sm font-semibold text-chat-fg">AI Assistant</h2>
-          <p className="text-xs text-sidebar-foreground">Ask me anything</p>
+          <p className="text-xs text-sidebar-foreground">Ask me anything · Can edit your tasks</p>
         </div>
       </div>
 
@@ -114,7 +166,18 @@ export function AIChatPanel({ onBack }: { onBack: () => void }) {
               <Bot className="w-8 h-8 text-primary" />
             </div>
             <h3 className="text-lg font-semibold text-chat-fg mb-1">How can I help?</h3>
-            <p className="text-sm text-sidebar-foreground max-w-xs">Ask me about project management, task organization, or anything else!</p>
+            <p className="text-sm text-sidebar-foreground max-w-xs mb-4">I can manage your tasks — create, edit, delete, or just chat about your project!</p>
+            <div className="flex flex-wrap gap-2 justify-center max-w-sm">
+              {["Change a task's priority", "Move a task to Done", "Create a new task"].map(q => (
+                <button
+                  key={q}
+                  onClick={() => { setInput(q); }}
+                  className="text-xs px-3 py-1.5 rounded-full bg-sidebar-hover text-chat-fg hover:bg-primary/20 transition-colors"
+                >
+                  {q}
+                </button>
+              ))}
+            </div>
           </div>
         )}
         {messages.map((msg, i) => (
@@ -131,7 +194,7 @@ export function AIChatPanel({ onBack }: { onBack: () => void }) {
             }`}>
               {msg.role === "assistant" ? (
                 <div className="prose prose-sm prose-invert max-w-none [&_p]:mb-2 [&_p:last-child]:mb-0">
-                  <ReactMarkdown>{msg.content}</ReactMarkdown>
+                  <ReactMarkdown>{stripActionBlocks(msg.content)}</ReactMarkdown>
                 </div>
               ) : msg.content}
             </div>

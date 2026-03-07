@@ -5,8 +5,31 @@ import { AddTaskDialog } from "./AddTaskDialog";
 import { useTasks, useUpdateTask, useDeleteTask } from "@/hooks/useTasks";
 import { Plus, Search } from "lucide-react";
 import { toast } from "sonner";
+import confetti from "canvas-confetti";
 
 const columns = ["todo", "in_progress", "done"];
+
+function fireConfetti() {
+  const end = Date.now() + 600;
+  const colors = ["#a855f7", "#6366f1", "#ec4899", "#14b8a6", "#f59e0b"];
+  (function frame() {
+    confetti({
+      particleCount: 3,
+      angle: 60,
+      spread: 55,
+      origin: { x: 0, y: 0.7 },
+      colors,
+    });
+    confetti({
+      particleCount: 3,
+      angle: 120,
+      spread: 55,
+      origin: { x: 1, y: 0.7 },
+      colors,
+    });
+    if (Date.now() < end) requestAnimationFrame(frame);
+  })();
+}
 
 export function KanbanBoard() {
   const { data: tasks = [], isLoading } = useTasks();
@@ -38,9 +61,18 @@ export function KanbanBoard() {
   const onDragEnd = (result: DropResult) => {
     if (!result.destination) return;
     const { draggableId, destination } = result;
+    const movingToDone = destination.droppableId === "done";
     updateTask.mutate(
       { id: draggableId, status: destination.droppableId, position: destination.index },
-      { onError: () => toast.error("Failed to move task") }
+      {
+        onSuccess: () => {
+          if (movingToDone) {
+            fireConfetti();
+            toast.success("🎉 Task completed!");
+          }
+        },
+        onError: () => toast.error("Failed to move task"),
+      }
     );
   };
 
